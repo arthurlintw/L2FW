@@ -509,20 +509,64 @@ void update_aging(struct ether_hdr *eth)
                 ptr1 = ptr1->next;
         }
 }
+
+static void
+lookup_mac(struct rte_mbuf *m,  uint32_t source_ip, unsigned portid)
+{
+ struct mac_list *ptr1 = NULL;
+ struct ether_hdr *eth_hdr;
+ struct ipv4_hdr *ip_h;
+ int l2_len;
+ uint32_t tip_addr;
+ static int i=0;
+	
+ i++;
+ //if(i<20)
+ //return;
+ 
+	ptr1 = start;
+        while(ptr1 != NULL)
+        {
+        	//printf("port = %d \n",ptr1->port );
+        	eth_hdr = rte_pktmbuf_mtod(m, struct ether_hdr *);
+ l2_len = sizeof(struct ether_hdr);
+ ip_h = (struct ipv4_hdr *) ((char *)eth_hdr + l2_len);
+ tip_addr = ip_h->dst_addr;
+
+		if ( tip_addr==ptr1->source_ip)
+		{
+			
+			ipv4_addr_dump(" got target IP    : ", ptr1->source_ip);
+			printf(" \n" );
+			//struct ether_addr s_addr;
+			print_ether_addr("", &ptr1->s_addr);
+			printf("\n port = %d \n",ptr1->port );
+			
+		}
+		
+                ptr1 = ptr1->next;
+        }
+	
+}	
+
 static void
 l2fwd_simple_forward(struct rte_mbuf *m,  uint32_t source_ip, unsigned portid)
 {
 	struct ether_hdr *eth;
 	void *tmp;
 	unsigned dst_port;
+	uint16_t eth_type;
 	int currenttime,difference,timeout = 8;
 	//int err;
 	//pthread_t t1,t2;
 	dst_port = l2fwd_dst_ports[portid];
+	#if 0
         printf("---------- Forwarding Path ----------\n");
         printf("Default forwarding dst port : %d\n",dst_port);
-	
+	#endif
 	eth = rte_pktmbuf_mtod(m, struct ether_hdr *);
+	eth_type = RTE_BE_TO_CPU_16(eth->ether_type);
+		
 	
 	if(l2fwd_user_defined_dst_port > 0)
 	{
@@ -531,12 +575,12 @@ l2fwd_simple_forward(struct rte_mbuf *m,  uint32_t source_ip, unsigned portid)
 		printf("----------------------------------------\n");
 		printf("Forwarding path has been modified from default to user defined\n");
 	}
-	else if(l2fwd_mac_learning_enabled)
+	else if(l2fwd_mac_learning_enabled && (eth_type == ETHER_TYPE_ARP) )
 	{
         	//l2fwd_mac_display();
 		//l2fwd_show_mac_entry();
 		//pthread_mutex_lock( &mutex1 );
-		printf("--------------l2fwd_mac_learning_enabled--------------------------\n");
+		printf("--------------l2fwd_mac_learning_enabled ARP --------------------------\n");
 		struct node *ptr = NULL;
 		struct mac_list *temp = NULL;
 		ptr = head;
@@ -618,6 +662,7 @@ l2fwd_simple_forward(struct rte_mbuf *m,  uint32_t source_ip, unsigned portid)
 	}
 	else 
 	{
+	#if 0	
 //========================================================
 		/* 02:00:00:00:00:xx */
 		tmp = &eth->d_addr.addr_bytes[0];
@@ -626,13 +671,19 @@ l2fwd_simple_forward(struct rte_mbuf *m,  uint32_t source_ip, unsigned portid)
 	
 		/* src addr */
 		ether_addr_copy(&l2fwd_ports_eth_addr[dst_port], &eth->s_addr);
+	#endif 
+	lookup_mac(m,  source_ip,  portid);
+		
 	}
 
+       if (eth_type == ETHER_TYPE_ARP) 
+       {
 	printf("========================================\n");
        	  l2fwd_mac_display();
 	  l2fwd_show_mac_entry();
 	//pthread_mutex_unlock( &mutex1 );
 	printf(" send packet ........\n");
+       }	
 	l2fwd_send_packet(m, (uint8_t) dst_port);
 }
 
@@ -739,7 +790,7 @@ l2fwd_main_loop(void)
                         	//	rte_pktmbuf_free(m);
                         	//	continue;
                 		//}
-
+#if 0
                                 printf("========================================\n");
                                 printf("Packet received on port :%d\n",portid);
                                 printf("------------ L2 Details------------\n");
@@ -754,7 +805,7 @@ l2fwd_main_loop(void)
 					(unsigned) m->pkt_len,
 					(int)m->nb_segs);
                                 printf("\n");
-
+#endif
                                 if (eth_type == ETHER_TYPE_ARP)
 				{
                                         arp_h = (struct arp_hdr *) ((char *)eth_hdr + l2_len);
@@ -770,10 +821,12 @@ l2fwd_main_loop(void)
                                         sip_addr = ip_h->src_addr;
                                         tip_addr = ip_h->dst_addr;
 				}
+				#if 0
 				printf("------------ L3 Details------------\n");
 				ipv4_addr_dump("   Source IP          : ", sip_addr);
                                 ipv4_addr_dump("\n   Destination IP     : ", tip_addr);
 				printf("\n");
+				#endif 
 	
 				l2fwd_simple_forward(m,  sip_addr,portid);
 			}
