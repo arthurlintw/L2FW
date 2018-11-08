@@ -1,3 +1,4 @@
+// l2fwd-mac 
 /*-thread created and in which two seperate threads for updation and checking are created infinately
 
 	final working code
@@ -84,7 +85,8 @@
 #define MAX_PKT_BURST 32
 #define BURST_TX_DRAIN_US 100 /* TX drain every ~100us */
  
-#define default_aging_time 30
+//#define default_aging_time 30
+#define default_aging_time 300
 pthread_mutex_t mutex1 = PTHREAD_MUTEX_INITIALIZER;
 /*
  * Work-around of a compilation error with ICC on invocations of the
@@ -203,9 +205,11 @@ struct l2fwd_port_statistics {
 struct l2fwd_port_statistics port_statistics[RTE_MAX_ETHPORTS];
 
 /* A tsc-based timer responsible for triggering statistics printout */
-#define TIMER_MILLISECOND 2000000ULL /* around 1ms at 2 Ghz */
+//#define TIMER_MILLISECOND 2000000ULL /* around 1ms at 2 Ghz */
+#define TIMER_MILLISECOND 3000000ULL /* around 1ms at 3 Ghz */
 #define MAX_TIMER_PERIOD 86400 /* 1 day max */
 static int64_t timer_period = 10 * TIMER_MILLISECOND * 1000; /* default period is 10 seconds */
+//static int64_t timer_period = 30 * TIMER_MILLISECOND * 1000; /* default period is 10 seconds */
 
 static inline void
 print_ether_addr(const char *what, struct ether_addr *eth_addr)
@@ -255,14 +259,14 @@ void add_mac_entry(struct ether_hdr *eth, uint32_t source_ip,unsigned port)
 	new->source_ip=source_ip; // 2018
 	if(head == NULL)
 	{
-		printf("head == NULL \n");
+		//printf("head == NULL \n");
 		head = new;
 		head->next = NULL;
 		
 	}
 	else
 	{
-		printf("head != NULL \n");
+		//printf("head != NULL \n");
 		new->next = head;
 		head = new;
 		
@@ -436,6 +440,8 @@ l2fwd_send_packet(struct rte_mbuf *m, uint8_t port)
 static void l2fwd_mac_display(void)
 {
 	struct node *node = NULL;
+	
+	return ; // 2018 1030
 	printf("\n==============DEBUGGING MAC TABLE=================\n");
         printf("        SMAC			DMAC		SIP	           PORT \n");
         node = head;
@@ -510,8 +516,114 @@ void update_aging(struct ether_hdr *eth)
         }
 }
 
+#if 0
+void
+arp_request(struct rte_mbuf *m,uint32_t source_ip)
+{
+    //struct ether_arp *arp;
+    struct arp_hdr *arp;
+    struct arp_hdr temp_arp;
+  //  struct in_addr ipbuf;
+   char my_mac[]={0x00,0x00,0x00,0x11,0x22,0x33};
+  // char my_mac[]={0xf4,0xe9,0xd4,0x7a,0xe1,0x65};
+  
+   struct ether_hdr *ethhdr;	
+    ethhdr = rte_pktmbuf_mtod(m, struct ether_hdr *);
+  
+   arp = (struct arp_hdr *)(ethhdr + 1);
+   
+   if (arp->arp_op == htons(ARP_OP_REQUEST))
+   {
+   //	printf(" it's a arp request , will reply it \n");
+   	
+
+   memcpy(&temp_arp,arp,sizeof(temp_arp));
+  // printf(" sizeof temp_arp %d  \n",sizeof(temp_arp));
+   memcpy(&temp_arp.arp_data.arp_sha, my_mac, ETHER_ADDR_LEN);
+   memcpy(&temp_arp.arp_data.arp_tha, &arp->arp_data.arp_sha, ETHER_ADDR_LEN);
+   temp_arp.arp_data.arp_sip=arp->arp_data.arp_tip;
+   temp_arp.arp_data.arp_tip=arp->arp_data.arp_sip;
+   temp_arp.arp_op=arp->arp_op = htons(ARP_OP_REPLY);
+   memcpy(arp,&temp_arp,sizeof(temp_arp));
+   memcpy(ethhdr->d_addr.addr_bytes,&temp_arp.arp_data.arp_tha, ETHER_ADDR_LEN);
+   memcpy(ethhdr->s_addr.addr_bytes,my_mac, ETHER_ADDR_LEN);
+   }
+}
+#endif
+
 static void
-lookup_mac(struct rte_mbuf *m,  uint32_t source_ip, unsigned portid)
+prepard_arp_request(uint32_t target_ip, unsigned portid)
+{
+ struct mac_list *ptr1 = NULL;
+ struct rte_mbuf *created_pkt;
+ struct arp_hdr *arp_hdr;
+ struct ether_hdr *eth_hdr;
+ struct ipv4_hdr *ip_h;
+ int l2_len;
+ uint32_t tip_addr;
+ size_t pkt_size;
+ char my_mac[]={0x00,0x00,0x00,0x11,0x22,0x33};
+ 
+ created_pkt = rte_pktmbuf_alloc(l2fwd_pktmbuf_pool);
+	if (created_pkt == NULL) {
+		printf("Failed to allocate mbuf\n");
+		return;
+	}
+	
+pkt_size = sizeof(struct ether_hdr) + sizeof(struct arp_hdr);
+	created_pkt->data_len = pkt_size;
+	created_pkt->pkt_len = pkt_size;
+	
+eth_hdr = rte_pktmbuf_mtod(created_pkt, struct ether_hdr *);
+	//rte_eth_macaddr_get(BOND_PORT, &eth_hdr->s_addr);
+	memcpy(&eth_hdr->s_addr, my_mac, ETHER_ADDR_LEN);
+	memset(&eth_hdr->d_addr, 0xFF, ETHER_ADDR_LEN);
+	eth_hdr->ether_type = rte_cpu_to_be_16(ETHER_TYPE_ARP);
+
+	arp_hdr = (struct arp_hdr *)((char *)eth_hdr + sizeof(struct ether_hdr));
+	arp_hdr->arp_hrd = rte_cpu_to_be_16(ARP_HRD_ETHER);
+	arp_hdr->arp_pro = rte_cpu_to_be_16(ETHER_TYPE_IPv4);
+	arp_hdr->arp_hln = ETHER_ADDR_LEN;
+	arp_hdr->arp_pln = sizeof(uint32_t);
+	arp_hdr->arp_op = rte_cpu_to_be_16(ARP_OP_REQUEST);
+
+	//rte_eth_macaddr_get(BOND_PORT, &arp_hdr->arp_data.arp_sha);
+	memcpy(&arp_hdr->arp_data.arp_sha, my_mac, ETHER_ADDR_LEN);
+	arp_hdr->arp_data.arp_sip =(target_ip&0x00ffffff)+0x01000000; // ---> x.x.x.1
+	//arp_hdr->arp_data.arp_sip =(target_ip);
+	memset(&arp_hdr->arp_data.arp_tha, 0, ETHER_ADDR_LEN);
+	arp_hdr->arp_data.arp_tip =target_ip;
+			  
+	//rte_eth_tx_burst(BOND_PORT, 0, &created_pkt, 1);
+	rte_eth_tx_burst(portid, 0, &created_pkt, 1);
+	//rte_eth_tx_burst(1, 0, &created_pkt, 1);
+        printf(" query_arp ....,port=%d\n",portid);
+	rte_delay_ms(100);
+			
+ 
+ 
+}	
+
+static void
+period_query_arp()
+{
+	 struct mac_list *ptr1 = NULL;
+	 uint32_t source_ip;
+	 unsigned portid;
+	ptr1 = start;
+        while(ptr1 != NULL)
+        {
+         source_ip=ptr1->source_ip;
+         portid=ptr1->port;	
+         prepard_arp_request(source_ip,portid);
+         ptr1 = ptr1->next;
+        }	
+} 	
+
+
+static int
+//lookup_mac(struct rte_mbuf *m,  uint32_t source_ip, unsigned portid)
+lookup_mac(uint32_t source_ip, unsigned *portid,struct ether_addr *dst_mac)
 {
  struct mac_list *ptr1 = NULL;
  struct ether_hdr *eth_hdr;
@@ -519,7 +631,9 @@ lookup_mac(struct rte_mbuf *m,  uint32_t source_ip, unsigned portid)
  int l2_len;
  uint32_t tip_addr;
  static int i=0;
+ struct ether_addr d_addr;
 	
+	//return;
  i++;
  //if(i<20)
  //return;
@@ -527,26 +641,37 @@ lookup_mac(struct rte_mbuf *m,  uint32_t source_ip, unsigned portid)
 	ptr1 = start;
         while(ptr1 != NULL)
         {
+        	#if 0
         	//printf("port = %d \n",ptr1->port );
         	eth_hdr = rte_pktmbuf_mtod(m, struct ether_hdr *);
  l2_len = sizeof(struct ether_hdr);
  ip_h = (struct ipv4_hdr *) ((char *)eth_hdr + l2_len);
  tip_addr = ip_h->dst_addr;
+ #endif 
 
-		if ( tip_addr==ptr1->source_ip)
+		//if ( tip_addr==ptr1->source_ip)
+		//source_ip=0x12345678;
+		if ( source_ip==ptr1->source_ip)
 		{
 			
-			ipv4_addr_dump(" got target IP    : ", ptr1->source_ip);
-			printf(" \n" );
+			//ipv4_addr_dump(" got target IP    : ", ptr1->source_ip);
+			//printf(" \n" );
 			//struct ether_addr s_addr;
-			print_ether_addr("", &ptr1->s_addr);
-			printf("\n port = %d \n",ptr1->port );
+			//print_ether_addr("", &ptr1->s_addr);
+			
+			ether_addr_copy(&ptr1->s_addr,dst_mac);
+			
+			
+			return 1;
 			
 		}
 		
                 ptr1 = ptr1->next;
         }
 	
+	//ipv4_addr_dump("  No MAC for this IP   : ", source_ip);
+	//prepard_arp_request( source_ip, portid); // 2018.11 todo , send arp request to all ports 
+	return 0;
 }	
 
 static void
@@ -580,7 +705,7 @@ l2fwd_simple_forward(struct rte_mbuf *m,  uint32_t source_ip, unsigned portid)
         	//l2fwd_mac_display();
 		//l2fwd_show_mac_entry();
 		//pthread_mutex_lock( &mutex1 );
-		printf("--------------l2fwd_mac_learning_enabled ARP --------------------------\n");
+	//	printf("--------------l2fwd_mac_learning_enabled ARP --------------------------\n");
 		struct node *ptr = NULL;
 		struct mac_list *temp = NULL;
 		ptr = head;
@@ -646,8 +771,11 @@ l2fwd_simple_forward(struct rte_mbuf *m,  uint32_t source_ip, unsigned portid)
 			if (memcmp(&eth->d_addr, &temp->s_addr, ETHER_ADDR_LEN) == 0)
 			{
 				dst_port = temp->port;
+				/*
 				printf("\n");
+				 print_ether_addr("", &temp->s_addr);
         			printf("dst port from table : %d\n",dst_port);
+        			*/
 				break;
 			}
 			temp = temp->next;
@@ -656,7 +784,7 @@ l2fwd_simple_forward(struct rte_mbuf *m,  uint32_t source_ip, unsigned portid)
 		if(temp == NULL)
 		{
 			//dst_port = 9; // BUG ?????
-        		printf("Dumping port : %d\n",dst_port);
+        		//printf("Dumping port : %d\n",dst_port);
 		}
 	
 	}
@@ -672,10 +800,11 @@ l2fwd_simple_forward(struct rte_mbuf *m,  uint32_t source_ip, unsigned portid)
 		/* src addr */
 		ether_addr_copy(&l2fwd_ports_eth_addr[dst_port], &eth->s_addr);
 	#endif 
-	lookup_mac(m,  source_ip,  portid);
+	//lookup_mac(m,  source_ip,  portid);
 		
 	}
 
+#if 0
        if (eth_type == ETHER_TYPE_ARP) 
        {
 	printf("========================================\n");
@@ -683,10 +812,39 @@ l2fwd_simple_forward(struct rte_mbuf *m,  uint32_t source_ip, unsigned portid)
 	  l2fwd_show_mac_entry();
 	//pthread_mutex_unlock( &mutex1 );
 	printf(" send packet ........\n");
-       }	
+       }
+#endif        	
 	l2fwd_send_packet(m, (uint8_t) dst_port);
 }
 
+void test_lookup_mac()
+{
+	//192.168.10.205=3232238285
+	uint32_t source_ip;
+	unsigned portid;
+	struct ether_addr dst_mac;
+	int i;
+    for (i=0;i<10;i++)
+{
+	source_ip= rte_cpu_to_be_32(i+3232238285);
+	if(lookup_mac(source_ip,&portid,&dst_mac))
+	{
+	ipv4_addr_dump("  IP ", source_ip);
+	print_ether_addr("---->  ", &dst_mac);
+	printf("     at   port %d \n",portid );
+	
+        }
+        else
+        {
+        	ipv4_addr_dump("  No MAC Entry : ", source_ip);
+        	printf("\n");
+        }	
+}
+
+	
+	
+	
+}
 /* main processing loop */
 static void
 l2fwd_main_loop(void)
@@ -756,6 +914,9 @@ l2fwd_main_loop(void)
 					/* do this only on master core */
 					if (lcore_id == rte_get_master_lcore()) {
 						print_stats();
+						period_query_arp();
+						l2fwd_show_mac_entry();
+						test_lookup_mac();
 						/* reset the timer */
 						timer_tsc = 0;
 					}
@@ -1114,10 +1275,12 @@ void update_node(struct mac_list *l_temp)
 				break;
 		}
 	//	if(head!=NULL)
+	  //  printf(" come 1 \n");
 		temp=head->next;
 		prev=head;
 		while(temp!=NULL && head!=NULL)
 		{
+			 // printf(" come 2 \n");
 			if(memcmp(&l_temp->s_addr, &temp->s_addr, ETHER_ADDR_LEN) == 0)
 			{
 				prev->next=temp->next;
